@@ -93,8 +93,8 @@ class CircuitGraph:
                 self.resistive_adj[node1].add(node2)
                 self.resistive_adj[node2].add(node1)
             
-            # For Capacitor Add to capacitive graph (won't help DC but good to track)
-            elif element.element_type == ElementType.CAPACITOR:
+            # For Capacitor/CouplingCapacitor Add to capacitive graph (won't help DC but good to track)
+            elif element.element_type in (ElementType.CAPACITOR, ElementType.COUPLING_CAPACITOR):
                 self.capacitive_adj[node1].add(node2)
                 self.capacitive_adj[node2].add(node1)
 
