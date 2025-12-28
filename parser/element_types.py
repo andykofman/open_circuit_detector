@@ -39,7 +39,7 @@ class CouplingCapacitor(Element):
     def __init__(self, name: str, node1: str, node2: str, value: float):
         super().__init__(name, node1, node2, value, ElementType.COUPLING_CAPACITOR)
 @dataclass
-class Subcircuit(Element):
+class Subcircuit:
     """ Class for subcircuit elements. """
     name: str
     ports: list[str]

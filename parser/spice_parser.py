@@ -27,7 +27,7 @@ class SpiceParser:
 
     ## Regex patterns for parsing different elements
     # 1- Subcircuit  pattern
-    """
+    r"""
     For the start of the string, skip the dot character, then match 'subckt' (case insensitive) followed by one or more whitespace characters.
     Next, capture the subcircuit name as a sequence of non-whitespace characters (\S+) --> that will be group 1.
     After that, capture the rest of the line (.+) as the ports of the subcircuit --> that will be group 2.
