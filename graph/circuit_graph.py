@@ -198,3 +198,116 @@ class CircuitGraph:
                 # Example: capacitive_adj["b"] = {"vss"} → len = 1
                 # Total: 3 + 1 = 4
         return degree
+
+    def get_resistive_degree(self, node: str) -> int:
+        """
+        Get the number of resistive connections for a node.
+        
+        Args:
+            node: The node name to query (case insensitive)
+        Returns:
+            Number of resistive connections.
+        """
+        return len(self.resistive_adj[node.lower()])
+    
+    def get_capacitive_degree(self, node: str) -> int:
+        """
+        Get the number of capacitive connections for a node.
+        
+        Args:
+            node: The node name to query (case insensitive)
+        Returns:
+            Number of capacitive connections.
+        """
+        return len(self.capacitive_adj[node.lower()])
+    
+    def get_resistive_neighbors(self, node: str) -> Set[str]:
+        """
+        Get all nodes connected to a given node through resistors.
+        
+        Args:
+            node: The node name to query (case insensitive)
+        Returns:
+            Set of neighbor node names connected via resistors.
+        """
+        return self.resistive_adj[node.lower()]
+
+    def build_from_netlist(self, netlist) -> None:
+        """
+        Build graph from a complete netlist with top-level elements.
+        
+        This flattens the hierarchy by:
+        1. Processing each subcircuit instance
+        2. Mapping subcircuit ports to instance connection nodes
+        3. Adding top-level elements directly
+        
+        Args:
+            netlist: TopLevelNetlist object with subcircuits, instances, and top_level_elements
+        Returns:
+            None, modifies the graph in place.
+        """
+        # For each subcircuit instance, map internal nodes to flattened names
+        for instance in netlist.instances:
+            subckt_type = instance.subcircuit_type
+            
+            if subckt_type not in netlist.subcircuits:
+                continue  # Skip if subcircuit definition not found
+            
+            subckt = netlist.subcircuits[subckt_type]
+            
+            # Create mapping from subcircuit ports to instance connections
+            port_mapping = {}
+            for i, port in enumerate(subckt.ports):
+                if i < len(instance.connections):
+                    port_mapping[port.lower()] = instance.connections[i].lower()
+            
+            # Process each element in the subcircuit
+            for element in subckt.elements:
+                # Map node names through port connections
+                node1 = element.node1.lower()
+                node2 = element.node2.lower()
+                
+                # If node is a port, map to instance connection
+                if node1 in port_mapping:
+                    node1 = port_mapping[node1]
+                else:
+                    # Internal node - prefix with instance name to avoid conflicts
+                    node1 = f"{instance.instance_name}_{node1}"
+                
+                if node2 in port_mapping:
+                    node2 = port_mapping[node2]
+                else:
+                    node2 = f"{instance.instance_name}_{node2}"
+                
+                # Add nodes
+                self.all_nodes.add(node1)
+                self.all_nodes.add(node2)
+                
+                # Store element with flattened name
+                flat_name = f"{instance.instance_name}_{element.name}"
+                self.elements[flat_name] = element
+                
+                # Add to appropriate adjacency list
+                if element.element_type == ElementType.RESISTOR:
+                    self.resistive_adj[node1].add(node2)
+                    self.resistive_adj[node2].add(node1)
+                elif element.element_type in (ElementType.CAPACITOR, ElementType.COUPLING_CAPACITOR):
+                    self.capacitive_adj[node1].add(node2)
+                    self.capacitive_adj[node2].add(node1)
+        
+        # Process top-level elements
+        for element in netlist.top_level_elements:
+            node1 = element.node1.lower()
+            node2 = element.node2.lower()
+            
+            self.all_nodes.add(node1)
+            self.all_nodes.add(node2)
+            
+            self.elements[element.name] = element
+            
+            if element.element_type == ElementType.RESISTOR:
+                self.resistive_adj[node1].add(node2)
+                self.resistive_adj[node2].add(node1)
+            elif element.element_type in (ElementType.CAPACITOR, ElementType.COUPLING_CAPACITOR):
+                self.capacitive_adj[node1].add(node2)
+                self.capacitive_adj[node2].add(node1)
