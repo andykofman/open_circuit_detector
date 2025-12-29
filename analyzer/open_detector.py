@@ -116,6 +116,10 @@ class OpenCircuitDetector:
         for node in self.graph.all_nodes:
             if node in self.graph.ground_nodes:
                 continue
+            
+            # Skip ports - they are handled by _detect_floating_ports()
+            if node in self.graph.port_nodes:
+                continue
                 
             r_degree = len(self.graph.resistive_adj[node])
             c_degree = len(self.graph.capacitive_adj[node])
@@ -150,9 +154,16 @@ class OpenCircuitDetector:
                     n for n in component 
                     if len(self.graph.resistive_adj[n]) > 0 or len(self.graph.capacitive_adj[n]) > 0
                 ]
+                
+                # Skip components where ALL nodes are capacitor-only (no resistive connections)
+                # These are handled by _detect_capacitor_only_nodes()
+                nodes_with_resistive = [
+                    n for n in component
+                    if len(self.graph.resistive_adj[n]) > 0
+                ]
 
-                # Only report if there are nodes with connections in this component
-                if len(nodes_with_connections) > 0:
+                # Only report if there are nodes with resistive connections in this component
+                if len(nodes_with_resistive) > 0:
                     # Prepare a description
                     nodes_str = ", ".join(sorted(component)[:5])
                     # Truncate if too long
