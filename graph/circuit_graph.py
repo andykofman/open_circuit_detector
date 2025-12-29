@@ -275,19 +275,19 @@ class CircuitGraph:
                     node1 = port_mapping[node1]
                 else:
                     # Internal node - prefix with instance name to avoid conflicts
-                    node1 = f"{instance.instance_name}_{node1}"
+                    node1 = f"{instance.instance_name.lower()}_{node1}"
                 
                 if node2 in port_mapping:
                     node2 = port_mapping[node2]
                 else:
-                    node2 = f"{instance.instance_name}_{node2}"
+                    node2 = f"{instance.instance_name.lower()}_{node2}"
                 
                 # Add nodes
                 self.all_nodes.add(node1)
                 self.all_nodes.add(node2)
                 
                 # Store element with flattened name
-                flat_name = f"{instance.instance_name}_{element.name}"
+                flat_name = f"{instance.instance_name.lower()}_{element.name}"
                 self.elements[flat_name] = element
                 
                 # Add to appropriate adjacency list
