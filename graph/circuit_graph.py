@@ -54,6 +54,9 @@ class CircuitGraph:
         # Set of port node names (external connections to subcircuit)
         self.port_nodes: Set[str] = set()
 
+        # Set of top-level node names (from top-level elements)
+        self.top_level_nodes: Set[str] = set()
+
         # Known ground/reference node names (case-insensitive) --> note that all node names are stored in lowercase
         self.ground_nodes: Set[str] = {'0', 'gnd', 'vss', 'ground'}
 
@@ -302,6 +305,8 @@ class CircuitGraph:
             
             self.all_nodes.add(node1)
             self.all_nodes.add(node2)
+            self.top_level_nodes.add(node1)
+            self.top_level_nodes.add(node2)
             
             self.elements[element.name] = element
             
