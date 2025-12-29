@@ -158,3 +158,223 @@ class TestSpiceParser:
         # Subcircuit should still be parsed
         assert "test" in result
         assert len(result["test"].elements) == 2
+
+
+class TestCompleteNetlistParsing:
+    """Unit tests for parse_file_complete and parse_lines_complete methods."""
+
+    # ==================== TopLevelNetlist Tests ====================
+
+    def test_parse_lines_complete_returns_toplevelnetlist(self):
+        """
+        Test that parse_lines_complete returns a TopLevelNetlist object.
+        
+        Expected: Return type is TopLevelNetlist with correct attributes.
+        """
+        from parser.element_types import TopLevelNetlist
+        
+        parser = SpiceParser()
+        lines = [
+            ".subckt test A VSS",
+            "r1 A VSS 100",
+            ".ends"
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert isinstance(result, TopLevelNetlist)
+        assert hasattr(result, 'subcircuits')
+        assert hasattr(result, 'instances')
+        assert hasattr(result, 'top_level_elements')
+
+    def test_parse_lines_complete_parses_subcircuits(self):
+        """
+        Test that subcircuits are correctly parsed into TopLevelNetlist.
+        
+        Scenario: Single subcircuit with resistor.
+        Expected: Subcircuit appears in subcircuits dict.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A B VSS",
+            "r1 A B 100",
+            "r2 B VSS 200",
+            ".ends"
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert "mysub" in result.subcircuits
+        assert len(result.subcircuits["mysub"].elements) == 2
+
+    def test_parse_lines_complete_parses_top_level_elements(self):
+        """
+        Test parsing of elements outside subcircuits.
+        
+        Scenario: Coupling capacitors at top level after .ends.
+        Expected: Elements appear in top_level_elements list.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A VSS",
+            "r1 A VSS 100",
+            ".ends",
+            "cc_1 node1 N 1f",
+            "cc_2 node2 N 2f",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.top_level_elements) == 2
+        assert all(e.element_type == ElementType.COUPLING_CAPACITOR for e in result.top_level_elements)
+
+    def test_parse_lines_complete_parses_top_level_resistor(self):
+        """
+        Test parsing resistors at top level.
+        
+        Scenario: Bias resistor at top level.
+        Expected: Resistor in top_level_elements.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A VSS",
+            "r1 A VSS 100",
+            ".ends",
+            "r_bias N 0 1meg",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.top_level_elements) == 1
+        assert result.top_level_elements[0].element_type == ElementType.RESISTOR
+
+    # ==================== SubcircuitInstance Tests ====================
+
+    def test_parse_lines_complete_parses_instance(self):
+        """
+        Test parsing of subcircuit instantiation (X line).
+        
+        Scenario: x0 instance of mysub subcircuit.
+        Expected: Instance appears in instances list.
+        """
+        from parser.element_types import SubcircuitInstance
+        
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A VSS",
+            "r1 A VSS 100",
+            ".ends",
+            "x0 port1 port2 mysub",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.instances) == 1
+        assert isinstance(result.instances[0], SubcircuitInstance)
+        assert result.instances[0].subcircuit_type == "mysub"
+
+    def test_instance_connections_parsed_correctly(self):
+        """
+        Test that instance connections are correctly extracted.
+        
+        Scenario: Instance with 3 port connections.
+        Expected: All connections in order.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A B C",
+            "r1 A B 100",
+            ".ends",
+            "x0 node1 node2 node3 mysub",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert result.instances[0].connections == ["node1", "node2", "node3"]
+
+    def test_instance_name_parsed_correctly(self):
+        """
+        Test that instance name is extracted from X line.
+        
+        Scenario: x_myinst instance.
+        Expected: instance_name = "_myinst" (after 'x').
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A",
+            "r1 A 0 100",
+            ".ends",
+            "x_myinst port1 mysub",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert result.instances[0].instance_name == "_myinst"
+
+    def test_instance_with_special_characters(self):
+        """
+        Test parsing instance with special characters like % in name.
+        
+        Scenario: Instance name contains % (like real netlist).
+        Expected: Correctly parsed without error.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt PM_CMOM1%P A B",
+            "r1 A B 100",
+            ".ends",
+            "x_PM_CMOM1%P port1 port2 PM_CMOM1%P",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.instances) == 1
+        assert result.instances[0].subcircuit_type == "PM_CMOM1%P"
+
+    # ==================== Mixed Content Tests ====================
+
+    def test_complete_netlist_with_all_elements(self):
+        """
+        Test parsing a complete netlist with subcircuit, instance, and top-level elements.
+        
+        Scenario: Full hierarchy like the real netlist.
+        Expected: All components correctly parsed.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A B VSS",
+            "r1 A B 100",
+            "c1 B VSS 1f",
+            ".ends",
+            "x0 p1 p2 p3 mysub",
+            "cc_1 p1 N 1f",
+            "cc_2 p2 N 2f",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.subcircuits) == 1
+        assert len(result.instances) == 1
+        assert len(result.top_level_elements) == 2
+
+    def test_multiple_instances(self):
+        """
+        Test parsing multiple subcircuit instances.
+        
+        Scenario: Two instances of same subcircuit.
+        Expected: Both instances in list.
+        """
+        parser = SpiceParser()
+        lines = [
+            ".subckt mysub A",
+            "r1 A 0 100",
+            ".ends",
+            "x0 port1 mysub",
+            "x1 port2 mysub",
+        ]
+        
+        result = parser.parse_lines_complete(lines)
+        
+        assert len(result.instances) == 2
+        assert result.instances[0].instance_name == "0"
+        assert result.instances[1].instance_name == "1"
