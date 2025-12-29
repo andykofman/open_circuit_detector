@@ -112,77 +112,90 @@ def main() -> int:
         # Step 1: Parse the netlist
         if args.verbose:
             print(f"Parsing netlist: {args.netlist}")
-        
+
         parser = SpiceParser()
-        
+
         if args.subcircuit_only:
             # Parse only the first subcircuit
             subcircuits = parser.parse_file(str(netlist_path))
             if not subcircuits:
                 print("Error: No subcircuits found in netlist", file=sys.stderr)
                 return 1
-            
+
             if args.verbose:
                 print(f"Found {len(subcircuits)} subcircuit(s)")
                 for name, subckt in subcircuits.items():
                     print(f"  - {name}: {len(subckt.ports)} ports, {len(subckt.elements)} elements")
-            
+
             # Build graph from first subcircuit
             graph = CircuitGraph()
             subcircuit = next(iter(subcircuits.values()))
             graph.build_from_subcircuit(subcircuit)
-            
+
             # Run standard detection
             detector = OpenCircuitDetector(graph)
             issues = detector.detect_all()
-            
+
         else:
             # Parse complete netlist with top-level elements
             netlist = parser.parse_file_complete(str(netlist_path))
-            
+
             if args.verbose:
                 print(f"Found {len(netlist.subcircuits)} subcircuit(s)")
                 print(f"Found {len(netlist.instances)} instance(s)")
                 print(f"Found {len(netlist.top_level_elements)} top-level element(s)")
-            
+
             # Build flattened graph
             graph = CircuitGraph()
             graph.build_from_netlist(netlist)
-            
+
             if args.verbose:
                 print(f"Flattened graph: {len(graph.all_nodes)} nodes, {len(graph.elements)} elements")
                 print(f"Top-level nodes: {len(graph.top_level_nodes)}")
-            
+
             # Run flattened detection
             detector = OpenCircuitDetector(graph)
             issues = detector.detect_all_flattened()
-        
+
         # Step 2: Generate reports
         report = ReportGenerator(issues, str(netlist_path))
-        
+
+        # Always save timestamped reports in reports/ directory
+        from datetime import datetime
+        reports_dir = Path("reports")
+        reports_dir.mkdir(exist_ok=True)
+        timestamp = report.timestamp.replace(":", "-").replace("T", "T")[:19]  # e.g. 2025-12-29T15-30-00
+        json_path = reports_dir / f"report_{timestamp}.json"
+        txt_path = reports_dir / f"report_{timestamp}.txt"
+        report.save_json(str(json_path))
+        report.save_text(str(txt_path))
+        if args.verbose:
+            print(f"JSON report saved to: {json_path}")
+            print(f"Text report saved to: {txt_path}")
+
         # Save JSON report if requested
         if args.output_json:
             report.save_json(args.output_json)
             if args.verbose:
                 print(f"JSON report saved to: {args.output_json}")
-        
+
         # Save text report if requested
         if args.output_text:
             report.save_text(args.output_text)
             if args.verbose:
                 print(f"Text report saved to: {args.output_text}")
-        
+
         # Print summary unless quiet mode
         if not args.quiet:
             report.print_summary()
-        
+
         # Return appropriate exit code
         if issues:
             # Check severity - exit 2 for critical/error issues
             has_critical = any(i.severity in ["critical", "error"] for i in issues)
             return 2 if has_critical else 0
         return 0
-        
+
     except Exception as e:
         print(f"Error during analysis: {e}", file=sys.stderr)
         if args.verbose:
