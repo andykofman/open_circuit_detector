@@ -286,7 +286,7 @@ class OpenCircuitDetector:
         self._detect_floating_nodes()
         self._detect_isolated_components()
         self._detect_floating_ports()
-        self._detect_capacitor_only_nodes()
+        # Skip _detect_capacitor_only_nodes() - DC_FLOATING covers this case
         
         # Run DC-floating node detection (the key one for the planted bug)
         self._detect_dc_floating_nodes()
@@ -356,9 +356,8 @@ class OpenCircuitDetector:
             
             # Explore resistive neighbors
             for neighbor in self.graph.get_resistive_neighbors(current):
-                neighbor_lower = neighbor.lower()
-                if neighbor_lower not in visited:
-                    visited.add(neighbor_lower)
-                    queue.append(neighbor_lower)
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
         
         return False
