@@ -120,4 +120,5 @@ class TestSpiceParser:
         result = parser.parse_lines(lines)
         
         assert len(result["test"].elements) == 2
-        assert all(e.element_type == ElementType.CAPACITOR for e in result["test"].elements)
+        # Coupling capacitors should be correctly parsed as COUPLING_CAPACITOR type
+        assert all(e.element_type == ElementType.COUPLING_CAPACITOR for e in result["test"].elements)
