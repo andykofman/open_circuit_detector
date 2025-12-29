@@ -2,7 +2,7 @@
 
 import re
 from typing import List, Dict, Optional, Dict
-from .element_types import Element, Resistor, Capacitor, CouplingCapacitor, Subcircuit, ElementType
+from .element_types import Element, Resistor, Capacitor, CouplingCapacitor, Subcircuit, ElementType, SubcircuitInstance, TopLevelNetlist
 
 
 class SpiceParserError(Exception):
@@ -65,7 +65,16 @@ class SpiceParser:
         re.IGNORECASE
     )
 
-    # 6- Comment pattern
+    # 6- Subcircuit instance pattern (e.g., x0 port1 port2 port3 PM_CMOM1%P)
+    # The instance name starts with 'x', followed by the instance ID
+    # Then one or more nodes, and finally the subcircuit type name
+    # Using \S* instead of \w* to match special characters like % in names
+    SUBCKT_INSTANCE_PATTERN = re.compile(
+        r'^x(\S*)\s+(.+)$',
+        re.IGNORECASE
+    )
+
+    # 7- Comment pattern
     COMMENT_PATTERN = re.compile(r'^\*.*$')  # Matches lines starting with '*'
 
 
@@ -74,6 +83,8 @@ class SpiceParser:
         self.curren_subckt: Optional[str] = None
         self.elements: List[Element] = []
         self.ports: List[str] = []
+        self.top_level_elements: List[Element] = []
+        self.instances: List[SubcircuitInstance] = []
 
     def parse_file(self, filepath: str) -> Dict[str, Subcircuit]:
         """ Parse a SPICE netlist using the provided file path. 
@@ -116,6 +127,164 @@ class SpiceParser:
             self._end_subcircuit()
 
         return self.subcircuits
+    
+    def parse_file_complete(self, filepath: str) -> TopLevelNetlist:
+        """ Parse a complete SPICE netlist including top-level elements and instances.
+        
+        This method parses:
+        - Subcircuit definitions (.subckt ... .ends)
+        - Top-level elements (capacitors, resistors outside subcircuits)
+        - Subcircuit instantiations (x lines)
+        
+        Args:
+            filepath (str): Path to the SPICE netlist file.
+        Returns:
+            TopLevelNetlist: Complete netlist with subcircuits, instances, and top-level elements.
+        """
+        with open(filepath, 'r') as file:
+            lines = file.readlines()
+        return self.parse_lines_complete(lines)
+    
+    def parse_lines_complete(self, lines: List[str]) -> TopLevelNetlist:
+        """ Parse a complete netlist including top-level elements and instances.
+        
+        Args:
+            lines (List[str]): List of lines from the SPICE netlist.
+        Returns:
+            TopLevelNetlist: Complete netlist with subcircuits, instances, and top-level elements.
+        """
+        # Reset state for complete parsing
+        self.top_level_elements = []
+        self.instances = []
+        
+        # First, join continuation lines
+        joined_lines = self._join_continuation_lines(lines)
+        
+        # Parse all lines
+        for line_num, line in enumerate(joined_lines, start=1):
+            try:
+                self._parse_line_complete(line.strip())
+            except Exception as e:
+                raise SpiceParserError(f"Error parsing line {line_num}: {line}\n{e}")
+        
+        # If we were in a subcircuit, make sure it terminated properly
+        if self.curren_subckt is not None:
+            import warnings
+            warnings.warn(
+                f"Subcircuit '{self.curren_subckt}' not properly terminated with .ends statement. Auto-terminating."
+            )
+            self._end_subcircuit()
+        
+        return TopLevelNetlist(
+            subcircuits=self.subcircuits,
+            instances=self.instances,
+            top_level_elements=self.top_level_elements
+        )
+    
+    def _parse_line_complete(self, line: str):
+        """ Parse a single line, handling both subcircuit content and top-level elements.
+        
+        Args:
+            line (str): A single line from the SPICE netlist.
+        """
+        if not line:
+            return
+        
+        # Check for subcircuit start
+        subckt_start_match = self.SUBCKT_START_PATTERN.match(line)
+        if subckt_start_match:
+            self._start_subcircuit(subckt_start_match)
+            return
+        
+        # Check for subcircuit end
+        if self.SUBCKT_END_PATTERN.match(line):
+            self._end_subcircuit()
+            return
+        
+        # If inside a subcircuit, parse as subcircuit element
+        if self.curren_subckt is not None:
+            self._parse_element(line)
+        else:
+            # At top level - could be an instance or top-level element
+            self._parse_top_level_line(line)
+    
+    def _parse_top_level_line(self, line: str):
+        """ Parse a line at the top level (outside any subcircuit).
+        
+        Args:
+            line (str): A single line from the SPICE netlist.
+        """
+        # Check for subcircuit instance first (x lines)
+        instance_match = self.SUBCKT_INSTANCE_PATTERN.match(line)
+        if instance_match:
+            instance = self._parse_instance(instance_match)
+            if instance:
+                self.instances.append(instance)
+            return
+        
+        # Check for coupling capacitor (check BEFORE regular capacitor)
+        coupling_cap_match = self.COUPLING_CAP_PATTERN.match(line)
+        if coupling_cap_match:
+            name = coupling_cap_match.group(1)
+            node1 = coupling_cap_match.group(2)
+            node2 = coupling_cap_match.group(3)
+            value = self._parse_value(coupling_cap_match.group(4))
+            coupling_capacitor = CouplingCapacitor(name, node1, node2, value)
+            self.top_level_elements.append(coupling_capacitor)
+            return
+        
+        # Check for regular capacitor
+        capacitor_match = self.CAPACITOR_PATTERN.match(line)
+        if capacitor_match:
+            name = capacitor_match.group(1)
+            node1 = capacitor_match.group(2)
+            node2 = capacitor_match.group(3)
+            value = self._parse_value(capacitor_match.group(4))
+            capacitor = Capacitor(name, node1, node2, value)
+            self.top_level_elements.append(capacitor)
+            return
+        
+        # Check for resistor
+        resistor_match = self.RESISTOR_PATTERN.match(line)
+        if resistor_match:
+            name = resistor_match.group(1)
+            node1 = resistor_match.group(2)
+            node2 = resistor_match.group(3)
+            value = self._parse_value(resistor_match.group(4))
+            resistor = Resistor(name, node1, node2, value)
+            self.top_level_elements.append(resistor)
+            return
+        
+        # Ignore other top-level lines (comments already filtered, could be .option, etc.)
+        # Don't raise error for unknown top-level lines
+    
+    def _parse_instance(self, match: re.Match) -> Optional[SubcircuitInstance]:
+        """ Parse a subcircuit instance line.
+        
+        Format: x<instance_name> <node1> <node2> ... <nodeN> <subcircuit_type>
+        Example: x0 port1 port2 port3 PM_CMOM1%P
+        
+        Args:
+            match (re.Match): Match object from SUBCKT_INSTANCE_PATTERN
+        Returns:
+            SubcircuitInstance or None if invalid
+        """
+        instance_name = match.group(1)
+        rest = match.group(2).split()
+        
+        if len(rest) < 2:
+            # Need at least one connection and the subcircuit type
+            return None
+        
+        # Last token is the subcircuit type, rest are connections
+        subcircuit_type = rest[-1]
+        connections = rest[:-1]
+        
+        return SubcircuitInstance(
+            instance_name=instance_name,
+            subcircuit_type=subcircuit_type,
+            connections=connections
+        )
 
     def _join_continuation_lines(self, lines: List[str]) -> List[str]:
         """ Join continuation lines in the SPICE netlist.
@@ -246,18 +415,8 @@ class SpiceParser:
             self.elements.append(resistor)
             return
 
-        # Check for capacitor
-        capacitor_match = self.CAPACITOR_PATTERN.match(line)
-        if capacitor_match:
-            name = capacitor_match.group(1)
-            node1 = capacitor_match.group(2)
-            node2 = capacitor_match.group(3)
-            value = self._parse_value(capacitor_match.group(4))
-            capacitor = Capacitor(name, node1, node2, value)
-            self.elements.append(capacitor)
-            return
-
-        # Check for coupling capacitor
+        # IMPORTANT: Check for coupling capacitor BEFORE regular capacitor
+        # because 'cc_*' would otherwise match the general 'c\w*' pattern
         coupling_cap_match = self.COUPLING_CAP_PATTERN.match(line)
         if coupling_cap_match:
             name = coupling_cap_match.group(1)
@@ -266,6 +425,17 @@ class SpiceParser:
             value = self._parse_value(coupling_cap_match.group(4))
             coupling_capacitor = CouplingCapacitor(name, node1, node2, value)
             self.elements.append(coupling_capacitor)
+            return
+
+        # Check for regular capacitor (after coupling capacitor)
+        capacitor_match = self.CAPACITOR_PATTERN.match(line)
+        if capacitor_match:
+            name = capacitor_match.group(1)
+            node1 = capacitor_match.group(2)
+            node2 = capacitor_match.group(3)
+            value = self._parse_value(capacitor_match.group(4))
+            capacitor = Capacitor(name, node1, node2, value)
+            self.elements.append(capacitor)
             return
 
         # If we reach here, the line did not match any known element

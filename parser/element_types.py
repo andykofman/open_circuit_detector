@@ -1,7 +1,7 @@
 """ Data classes for SPICE element types. """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, List, Dict
 from enum import Enum
 
 class ElementType(Enum):
@@ -45,3 +45,36 @@ class Subcircuit:
     ports: list[str]
     elements: list[Element]
     internal_nodes: set[str]
+
+
+@dataclass
+class SubcircuitInstance:
+    """
+    Represents an instantiation of a subcircuit (X line in SPICE).
+    
+    Format: x<instance_name> <node1> <node2> ... <nodeN> <subcircuit_type>
+    Example: x0 port1 port2 port3 PM_CMOM1%P
+    
+    Attributes:
+        instance_name: Name of this instance (e.g., "0" from "x0")
+        subcircuit_type: Name of the subcircuit being instantiated (e.g., "PM_CMOM1%P")
+        connections: List of nodes connected to the subcircuit ports in order
+    """
+    instance_name: str
+    subcircuit_type: str
+    connections: List[str]
+
+
+@dataclass
+class TopLevelNetlist:
+    """
+    Complete netlist with subcircuits, instances, and top-level elements.
+    
+    This represents the full hierarchical structure of a SPICE netlist:
+    - subcircuits: Dictionary of subcircuit definitions
+    - instances: List of subcircuit instantiations
+    - top_level_elements: Elements defined outside any subcircuit (at top level)
+    """
+    subcircuits: Dict[str, Subcircuit]
+    instances: List['SubcircuitInstance']
+    top_level_elements: List[Element]
