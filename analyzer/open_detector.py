@@ -34,6 +34,13 @@ class OpenType(Enum):
         Example: A --C1-- B --C2-- VSS
         Node A has capacitor connections (c_degree > 0) but 
         no resistor connections (r_degree = 0). Blocks DC.
+        
+    DC_FLOATING_NODE: Node with only capacitive connections and no DC path to ground
+        Example: A --CC1-- N --CC2-- B, where N has no resistive path to ground
+        Node N may have many capacitive connections (c_degree > 0) but
+        if there's no resistive path from N to any ground node (0, VSS, etc.),
+        it's DC-floating. This is the key open circuit type for finding nodes
+        connected through coupling capacitors at the top level.
 
 
         More information about each type will be provided in the docs/README.md file.
@@ -42,6 +49,7 @@ class OpenType(Enum):
     ISOLATED_COMPONENT = "isolated_component"
     FLOATING_PORT = "floating_port"
     CAPACITOR_ONLY = "capacitor_only"
+    DC_FLOATING_NODE = "dc_floating_node"
     
 
 class OpenCircuit(NamedTuple):
@@ -260,3 +268,97 @@ class OpenCircuitDetector:
             if node1 in component or node2 in component:
                 elements.append(name)
         return elements
+
+    def detect_all_flattened(self) -> List[OpenCircuit]:
+        """
+        Run all detection algorithms including DC-floating node detection for flattened netlists.
+        
+        This is designed for analyzing netlists that include top-level coupling capacitors
+        connecting subcircuit ports to external nodes. The key detection is finding nodes
+        that have capacitive connections but no resistive path to ground.
+        
+        Returns:
+            List of OpenCircuit issues detected, including DC-floating nodes.
+        """
+        self.issues = []
+        
+        # Run standard detections
+        self._detect_floating_nodes()
+        self._detect_isolated_components()
+        self._detect_floating_ports()
+        self._detect_capacitor_only_nodes()
+        
+        # Run DC-floating node detection (the key one for the planted bug)
+        self._detect_dc_floating_nodes()
+        
+        return self.issues
+    
+    def _detect_dc_floating_nodes(self) -> None:
+        """
+        Detect nodes that have capacitive connections but no DC path to ground.
+        
+        A DC-floating node:
+        - Has at least one capacitive connection (c_degree > 0)
+        - Has no resistive path to any ground node (0, VSS, etc.)
+        
+        This is the key detection for finding the planted bug: a node connected
+        through coupling capacitors at the top level with no resistive path to ground.
+        
+        The detection uses BFS to trace resistive paths from each node to ground.
+        If no such path exists, the node is DC-floating.
+        """
+        for node in self.graph.all_nodes:
+            # Skip ground nodes
+            if node in self.graph.ground_nodes:
+                continue
+            
+            # Get node degrees
+            r_degree = self.graph.get_resistive_degree(node)
+            c_degree = self.graph.get_capacitive_degree(node)
+            
+            # Only check nodes with capacitive connections
+            if c_degree == 0:
+                continue
+            
+            # Check if there's a resistive path to ground
+            if not self._has_resistive_path_to_ground(node):
+                self.issues.append(OpenCircuit(
+                    node=node,
+                    open_type=OpenType.DC_FLOATING_NODE,
+                    description=f"Node '{node}' has {c_degree} capacitive connections but no DC path to ground (r_degree={r_degree})",
+                    affected_elements=self._get_connected_elements(node),
+                    severity="error"
+                ))
+    
+    def _has_resistive_path_to_ground(self, start_node: str) -> bool:
+        """
+        Check if there's a resistive path from start_node to any ground node.
+        
+        Uses BFS traversing only through resistive connections (not capacitors).
+        
+        Args:
+            start_node: The node to check
+        Returns:
+            True if there's a resistive path to ground, False otherwise.
+        """
+        from collections import deque
+        
+        visited = set()
+        queue = deque([start_node.lower()])
+        visited.add(start_node.lower())
+        
+        while queue:
+            current = queue.popleft()
+            
+            # Check if we reached a ground node
+            if current in self.graph.ground_nodes:
+                return True
+            
+            # Explore resistive neighbors
+            for neighbor in self.graph.get_resistive_neighbors(current):
+                neighbor_lower = neighbor.lower()
+                if neighbor_lower not in visited:
+                    visited.add(neighbor_lower)
+                    queue.append(neighbor_lower)
+        
+        return False
